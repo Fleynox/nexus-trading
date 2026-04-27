@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus Analytics | Data Terminal</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        bgDark: '#050914',       /* Negro Abismal (Fondo principal) */
+                        panel: '#0a101d',        /* Azul ultra oscuro (Tarjetas) */
+                        panelHover: '#111a2e',   /* Hover de las tarjetas */
+                        borderOutline: '#1a243d',/* Bordes sutiles */
+                        brand: '#3B82F6',        /* Azul corporativo */
+                        up: '#00C853',           /* Verde neón financiero */
+                        upBg: 'rgba(0, 200, 83, 0.1)',
+                        down: '#FF3D00',         /* Rojo neón financiero */
+                        downBg: 'rgba(255, 61, 0, 0.1)',
+                        textMain: '#F8FAFC',     /* Blanco brillante para datos */
+                        textMuted: '#64748B'     /* Gris azulado para etiquetas */
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style type="text/tailwindcss">
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+        @layer utilities {
+            .terminal-panel {
+                @apply bg-panel border border-borderOutline rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.5)] flex flex-col;
+            }
+            .shimmer {
+                background: linear-gradient(90deg, #0a101d 25%, #1a243d 50%, #0a101d 75%);
+                background-size: 200% 100%;
+                animation: shimmerEffect 1.5s infinite;
+            }
+            .toast {
+                @apply bg-panel border-l-4 text-white p-4 rounded-lg shadow-2xl flex items-center gap-3 transform translate-x-full transition-transform duration-300;
+            }
+            .toast.show {
+                @apply translate-x-0;
+            }
+        }
+        
+        /* Animaciones visuales de mercado */
+        .flash-up { animation: flashGreen 0.8s ease-out; }
+        .flash-down { animation: flashRed 0.8s ease-out; }
+        @keyframes flashGreen { 0% { background-color: rgba(0, 200, 83, 0.15); border-color: #00c853; } 100% { background-color: transparent; border-color: transparent; } }
+        @keyframes flashRed { 0% { background-color: rgba(255, 61, 0, 0.15); border-color: #ff3d00; } 100% { background-color: transparent; border-color: transparent; } }
+        @keyframes shimmerEffect { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+        /* Scrollbar oscuro */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { @apply bg-borderOutline rounded-full; }
+        ::-webkit-scrollbar-thumb:hover { @apply bg-textMuted; }
+    </style>
+</head>
+<body class="h-screen flex flex-col bg-bgDark text-textMain antialiased overflow-hidden font-sans">
+
+    <header class="px-6 py-4 flex justify-between items-center border-b border-borderOutline bg-panel z-50 shadow-md">
+        <div class="flex items-center gap-4">
+            <div class="w-10 h-10 rounded-lg bg-brand/10 border border-brand/30 flex items-center justify-center shadow-[0_0_15px_rgba(59,130,246,0.3)]">
+                <i class="ph ph-chart-polar text-brand text-2xl font-bold"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-bold tracking-widest uppercase text-white">Nexus<span class="text-brand">Analytics</span></h1>
+                <div class="flex items-center gap-1.5 mt-0.5">
+                    <div class="w-2 h-2 rounded-full bg-up animate-pulse" id="marketStatusDot"></div>
+                    <span class="text-[10px] text-up uppercase tracking-wider font-bold" id="marketStatusText">FMP DATAFEED ONLINE</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="relative w-full max-w-xl group z-50 mx-4" id="searchContainer">
+            <i class="ph ph-magnifying-glass absolute left-4 top-3 text-textMuted group-focus-within:text-brand transition-colors text-lg"></i>
+            <input type="text" id="searchInput" class="w-full bg-bgDark border border-borderOutline rounded-xl py-2.5 pl-12 pr-4 text-sm focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand transition-all shadow-inner font-mono text-white placeholder-textMuted" placeholder="Buscar símbolo (Ej. AAPL, MSFT, TSLA)..." autocomplete="off">
+            <ul id="searchResults" class="absolute top-full mt-2 w-full bg-panel border border-borderOutline rounded-xl shadow-[0_10px_40px_rgba(0,0,0,0.8)] overflow-hidden hidden max-h-64 overflow-y-auto z-50 divide-y divide-borderOutline"></ul>
+        </div>
+
+        <div class="hidden md:flex items-center gap-4">
+            <div class="text-right mr-2">
+                <p class="text-sm font-bold text-white">Analista de Datos</p>
+                <p class="text-[10px] text-brand uppercase tracking-wider font-semibold">Modo Institucional</p>
+            </div>
+            <div class="w-10 h-10 rounded-full bg-bgDark flex items-center justify-center border border-borderOutline">
+                <i class="ph ph-user text-textMuted text-lg"></i>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-1 overflow-hidden p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-[1600px] mx-auto w-full">
+
+        <aside class="col-span-1 lg:col-span-3 terminal-panel h-full flex flex-col overflow-hidden">
+            <div class="p-4 border-b border-borderOutline bg-panelHover/30 rounded-t-xl flex justify-between items-center">
+                <h2 class="text-xs font-bold uppercase tracking-widest text-textMuted flex items-center gap-2">
+                    <i class="ph ph-list-numbers text-brand text-lg"></i> Seguimiento
+                </h2>
+                <button id="btnRefreshWatchlist" class="text-textMuted hover:text-white transition-colors bg-bgDark p-1.5 rounded-md border border-borderOutline" title="Actualizar Datos">
+                    <i class="ph ph-arrows-clockwise text-sm"></i>
+                </button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-3 space-y-2" id="watchlistContainer">
+                </div>
+        </aside>
+
+        <section class="col-span-1 lg:col-span-9 flex flex-col gap-6 relative h-full overflow-y-auto lg:overflow-hidden pr-2">
+            
+            <div id="loader" class="absolute inset-0 z-20 bg-bgDark/90 backdrop-blur-md hidden flex-col items-center justify-center rounded-xl border border-borderOutline">
+                <div class="w-16 h-16 border-4 border-brand border-t-transparent rounded-full animate-spin shadow-[0_0_20px_rgba(59,130,246,0.5)]"></div>
+                <p class="mt-6 font-mono text-sm text-brand tracking-widest animate-pulse font-bold">SINCRONIZANDO DATOS...</p>
+            </div>
+
+            <div class="terminal-panel p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 flex-shrink-0 relative overflow-hidden">
+                <div class="absolute -top-20 -right-20 w-64 h-64 bg-brand/5 rounded-full blur-3xl pointer-events-none"></div>
+                
+                <div class="flex items-center gap-5 relative z-10">
+                    <div id="ui-logo" class="w-16 h-16 rounded-xl bg-bgDark border border-borderOutline flex items-center justify-center font-bold text-2xl text-white font-mono shadow-[0_4px_10px_rgba(0,0,0,0.5)]">--</div>
+                    <div class="md:min-w-80">
+                        <div>
+                            <div class="flex items-center gap-3 mb-1">
+                                <h2 id="ui-symbol" class="text-3xl font-black font-mono text-white tracking-tight">---</h2>
+                                <span id="ui-exchange" class="text-[10px] bg-borderOutline/50 text-textMuted px-2 py-1 rounded font-bold uppercase tracking-wider border border-textMuted/10">---</span>
+                            </div>
+                            <span id="ui-name" class="text-sm text-textMuted font-medium">Seleccione una empresa</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="text-left md:text-right w-full md:w-auto rounded-xl relative z-10 border border-transparent md:min-w-64" id="priceWidget">
+                    <p class="text-[10px] text-textMuted uppercase tracking-widest mb-1 font-semibold">Última Cotización (USD)</p>
+                    <h1 id="ui-price" class="text-5xl font-black font-mono tracking-tighter text-white">$0.00</h1>
+                    <div class="flex items-center md:justify-end gap-2 mt-2">
+                        <i id="ui-icon" class="ph ph-minus text-textMuted text-lg"></i>
+                        <span id="ui-change" class="text-sm font-bold font-mono">0.00 (0.00%)</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 flex-shrink-0">
+                <div class="terminal-panel p-4 flex flex-col justify-center hover:border-brand/30 transition-colors">
+                    <p class="text-[10px] text-textMuted uppercase tracking-widest mb-2 flex items-center gap-1.5 font-semibold"><i class="ph ph-chart-bar text-brand text-sm"></i> Volumen Diario</p>
+                    <p id="ui-vol" class="text-xl font-mono font-bold text-white">--</p>
+                </div>
+                <div class="terminal-panel p-4 flex flex-col justify-center hover:border-brand/30 transition-colors">
+                    <p class="text-[10px] text-textMuted uppercase tracking-widest mb-2 flex items-center gap-1.5 font-semibold"><i class="ph ph-clock text-brand text-sm"></i> Apertura</p>
+                    <p id="ui-open" class="text-xl font-mono font-bold text-white">--</p>
+                </div>
+                <div class="terminal-panel p-4 flex flex-col justify-center hover:border-down/30 transition-colors">
+                    <p class="text-[10px] text-textMuted uppercase tracking-widest mb-2 flex items-center gap-1.5 font-semibold"><i class="ph ph-trend-down text-down text-sm"></i> Mínimo Día</p>
+                    <p id="ui-low" class="text-xl font-mono font-bold text-white">--</p>
+                </div>
+                <div class="terminal-panel p-4 flex flex-col justify-center hover:border-up/30 transition-colors">
+                    <p class="text-[10px] text-textMuted uppercase tracking-widest mb-2 flex items-center gap-1.5 font-semibold"><i class="ph ph-trend-up text-up text-sm"></i> Máximo Día</p>
+                    <p id="ui-high" class="text-xl font-mono font-bold text-white">--</p>
+                </div>
+            </div>
+
+            <div class="terminal-panel flex-1 p-4 relative min-h-[350px]">
+                <div class="absolute top-5 left-5 z-10 pointer-events-none">
+                    <h3 class="text-sm font-bold text-white mb-1">Tendencia de Acción de Precio</h3>
+                    <p class="text-[10px] text-textMuted flex items-center gap-1"><i class="ph ph-chart-line-up text-brand"></i> Renderizado algorítmico intradiario</p>
+                </div>
+                <div class="w-full h-full relative pl-2 pt-14 pb-2">
+                    <canvas id="tradingChart"></canvas>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <div id="toast-container"></div>
+
+    <script>
+        /**
+         * ESTRUCTURA MODULAR - NEXUS ANALYTICS
+         * MODO OSCURO GARANTIZADO
+         */
+
+        const Config = {
+            API_KEY: "FQmkBGNPFuBI5F9dLJIXCwMFS1Gb8hMl",
+            BASE_URL: "https://financialmodelingprep.com/stable"
+        };
+
+        const State = {
+            currentSymbol: '',
+            chartInstance: null,
+            watchlist: [
+                { symbol: 'AAPL', name: 'Apple Inc.' },
+                { symbol: 'MSFT', name: 'Microsoft Corp.' },
+                { symbol: 'NVDA', name: 'NVIDIA Corp.' },
+                { symbol: 'TSLA', name: 'Tesla Inc.' },
+                { symbol: 'AMZN', name: 'Amazon.com Inc.' },
+                { symbol: 'GOOGL', name: 'Alphabet Inc.' }
+            ]
+        };
+
+        // --- GESTIÓN DE INTERFAZ DE USUARIO (UI) ---
+        const UI = {
+            formatMoney(num) { 
+                return '$' + parseFloat(num).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            },
+            
+            formatVol(num) { 
+                if(!num || num === 0) return '--';
+                return num >= 1e6 ? (num/1e6).toFixed(2) + ' M' : num.toLocaleString('en-US');
+            },
+
+            showToast(message, type = 'success') {
+                const container = document.getElementById('toast-container');
+                const toast = document.createElement('div');
+                
+                const icon = type === 'error' ?
+                    '<i class="ph ph-warning-circle text-2xl text-down"></i>' : '<i class="ph ph-check-circle text-2xl text-up"></i>';
+                const borderClass = type === 'error' ?
+                    'border-down' : 'border-up';
+                
+                toast.className = `toast border-l-4 ${borderClass} bg-panel text-white p-4 rounded-lg shadow-2xl flex items-center gap-3 transform translate-x-full transition-transform duration-300`;
+                toast.innerHTML = `${icon} <span class="text-sm font-medium text-white">${message}</span>`;
+                
+                container.appendChild(toast);
+                setTimeout(() => toast.classList.add('translate-x-0'), 10);
+                setTimeout(() => { 
+                    toast.classList.remove('translate-x-0'); 
+                    setTimeout(() => toast.remove(), 300); 
+                }, 4000);
+            },
+
+            toggleLoader(show) {
+                const loader = document.getElementById('loader');
+                if (show) loader.classList.replace('hidden', 'flex');
+                else loader.classList.replace('flex', 'hidden');
+            },
+
+            updateDashboard(data, name) {
+                const isPositive = data.change >= 0;
+                document.getElementById('ui-symbol').textContent = data.symbol;
+                document.getElementById('ui-name').textContent = name || data.name;
+                document.getElementById('ui-logo').textContent = data.symbol.substring(0, 2).replace('-','');
+                document.getElementById('ui-exchange').textContent = data.exchange;
+                
+                document.getElementById('ui-vol').textContent = this.formatVol(data.vol);
+                document.getElementById('ui-open').textContent = this.formatMoney(data.open);
+                document.getElementById('ui-high').textContent = this.formatMoney(data.high);
+                document.getElementById('ui-low').textContent = this.formatMoney(data.low);
+
+                const priceWidget = document.getElementById('priceWidget');
+                priceWidget.classList.remove('flash-up', 'flash-down');
+                void priceWidget.offsetWidth; // Forzar reflow para reiniciar animación
+                priceWidget.classList.add(isPositive ? 'flash-up' : 'flash-down');
+                // PASO 3: Corrección en JS (Eliminado padding dinámico y esquinas, manteniendo ancho mínimo y esquinas estables)
+                priceWidget.className = `text-left md:text-right w-full md:w-auto rounded-xl transition-colors duration-500 border border-transparent ${isPositive ? 'bg-up/5' : 'bg-down/5'} md:min-w-64`;
+
+                document.getElementById('ui-price').textContent = this.formatMoney(data.price);
+                
+                const icon = document.getElementById('ui-icon');
+                const changeEl = document.getElementById('ui-change');
+                const sign = isPositive ? '+' : '';
+                
+                icon.className = `ph ${isPositive ? 'ph-trend-up text-up' : 'ph-trend-down text-down'} text-xl`;
+                changeEl.className = `text-sm font-bold font-mono px-3 py-1 rounded-md border ${isPositive ? 'text-up bg-up/10 border-up/20' : 'text-down bg-down/10 border-down/20'}`;
+                changeEl.textContent = `${sign}${data.change.toFixed(2)} (${sign}${data.percent.toFixed(2)}%)`;
+            },
+
+            initChart() {
+                const ctx = document.getElementById('tradingChart').getContext('2d');
+                Chart.defaults.color = '#64748B';
+                Chart.defaults.font.family = 'JetBrains Mono';
+
+                State.chartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: [], datasets: [
+                        { label: 'Precio', data: [], borderColor: '#3B82F6', borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 6, fill: true, tension: 0.1, yAxisID: 'y' },
+                        { type: 'bar', label: 'Volumen', data: [], backgroundColor: '#1a243d', yAxisID: 'y1', barThickness: 'flex' }
+                    ]},
+                    options: {
+                        responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+                        plugins: { 
+                            legend: { display: false }, 
+                            tooltip: { backgroundColor: '#0a101d', titleColor: '#64748B', bodyColor: '#F8FAFC', borderColor: '#1a243d', borderWidth: 1, padding: 12, cornerRadius: 8 } 
+                        },
+                        scales: {
+                            x: { grid: { display: false }, ticks: { maxTicksLimit: 10 } },
+                            y: { position: 'right', grid: { color: '#1a243d', drawBorder: false } },
+                            y1: { position: 'left', display: false, min: 0 }
+                        }
+                    }
+                });
+            },
+
+            updateChart(currentPrice, isPositive) {
+                let prices = [], volumes = [], times = [];
+                let price = parseFloat(currentPrice) || 100;
+                const trend = isPositive ? -1 : 1;
+                for(let i = 0; i < 78; i++) {
+                    prices.unshift(price);
+                    volumes.unshift(Math.floor(Math.random() * 50000) + 5000);
+                    let t = new Date(); t.setMinutes(t.getMinutes() - (i*5));
+                    times.unshift(`${t.getHours().toString().padStart(2,'0')}:${t.getMinutes().toString().padStart(2,'0')}`);
+                    let shock = (Math.random() - 0.5) * (currentPrice * 0.003);
+                    price = price - shock - (trend * (currentPrice * 0.00015));
+                }
+
+                // Colores profundos
+                const themeColor = isPositive ? '#00C853' : '#FF3D00';
+                const gradient = State.chartInstance.ctx.createLinearGradient(0, 0, 0, 350);
+                gradient.addColorStop(0, isPositive ? 'rgba(0, 200, 83, 0.25)' : 'rgba(255, 61, 0, 0.25)');
+                gradient.addColorStop(1, 'rgba(0,0,0,0)');
+
+                State.chartInstance.data.labels = times;
+                State.chartInstance.data.datasets[0].data = prices;
+                State.chartInstance.data.datasets[0].borderColor = themeColor;
+                State.chartInstance.data.datasets[0].backgroundColor = gradient;
+                
+                State.chartInstance.data.datasets[1].data = volumes;
+                
+                const maxVol = volumes.length > 0 ? Math.max(...volumes) : 1000;
+                State.chartInstance.options.scales.y1.suggestedMax = maxVol * 4;
+
+                State.chartInstance.update();
+            }
+        };
+
+        // --- SERVICIOS DE DATOS ---
+        const API = {
+            async fetchQuote(symbol) {
+                const querySymbol = symbol.toUpperCase().trim();
+                const url = `${Config.BASE_URL}/quote?symbol=${querySymbol}&apikey=${Config.API_KEY}`;
+                
+                try {
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+                    
+                    const data = await response.json();
+                    if (data && data["Error Message"]) throw new Error(data["Error Message"]);
+                    if (!Array.isArray(data) || data.length === 0) throw new Error(`El símbolo "${querySymbol}" no fue encontrado.`);
+                    const q = data[0];
+                    return {
+                        symbol: q.symbol || querySymbol,
+                        name: q.name || 'Empresa Desconocida',
+                        price: parseFloat(q.price) || 0.00,
+                        change: parseFloat(q.change) || 0.00,
+                        percent: parseFloat(q.changesPercentage) || 0.00,
+                        open: parseFloat(q.open) || parseFloat(q.previousClose) || parseFloat(q.price) || 0.00,
+                        vol: parseInt(q.volume) || 0,
+                        high: parseFloat(q.dayHigh) || parseFloat(q.price) || 0.00,
+                        low: parseFloat(q.dayLow) || parseFloat(q.price) || 0.00,
+                        exchange: q.exchange || 'MERCADO'
+                    };
+                } catch (error) {
+                    throw error;
+                }
+            },
+
+            async searchSymbol(query) {
+                const url = `${Config.BASE_URL}/search-symbol?query=${query}&apikey=${Config.API_KEY}`;
+                const response = await fetch(url);
+                if (!response.ok) throw new Error("Fallo en la red");
+                return await response.json();
+            }
+        };
+
+        // --- CONTROLADORES PRINCIPALES ---
+        const App = {
+            async loadAsset(symbol, name = '') {
+                if (!symbol) return;
+                UI.toggleLoader(true);
+                
+                try {
+                    const data = await API.fetchQuote(symbol);
+                    State.currentSymbol = data.symbol;
+                    
+                    UI.updateDashboard(data, name);
+                    UI.updateChart(data.price, data.change >= 0);
+                    
+                    UI.showToast(`Análisis de ${data.symbol} completado`, 'success');
+                } catch (error) {
+                    UI.showToast(error.message, 'error');
+                } finally {
+                    UI.toggleLoader(false);
+                }
+            },
+
+            async refreshWatchlist() {
+                const container = document.getElementById('watchlistContainer');
+                container.innerHTML = `
+                    <div class="shimmer h-16 mb-2 rounded-xl"></div>
+                    <div class="shimmer h-16 mb-2 rounded-xl"></div>
+                    <div class="shimmer h-16 mb-2 rounded-xl"></div>
+                `;
+                let html = '';
+                for (let item of State.watchlist) {
+                    try {
+                        const q = await API.fetchQuote(item.symbol);
+                        const isUp = q.change >= 0;
+                        const nameDisplay = item.name || q.name;
+                        html += `
+                        <div onclick="App.loadAsset('${q.symbol}', '${nameDisplay}')" class="flex justify-between items-center p-3 mb-2 rounded-xl cursor-pointer bg-bgDark border border-borderOutline hover:border-brand/50 hover:bg-panelHover transition-all group shadow-sm">
+                            <div class="overflow-hidden pr-2">
+                                <p class="text-sm font-bold font-mono text-white group-hover:text-brand transition-colors">${q.symbol}</p>
+                                <p class="text-[10px] text-textMuted truncate w-24">${nameDisplay}</p>
+                            </div>
+                            <div class="text-right flex-shrink-0">
+                                <p class="text-sm font-mono text-white font-bold">${q.price.toLocaleString('en-US', {minimumFractionDigits: 2})}</p>
+                                <p class="text-[10px] font-mono font-bold ${isUp ? 'text-up bg-up/10' : 'text-down bg-down/10'} px-1.5 py-0.5 rounded mt-1 inline-block border ${isUp ? 'border-up/20' : 'border-down/20'}">${isUp?'+':''}${q.percent.toFixed(2)}%</p>
+                            </div>
+                        </div>`;
+                    } catch(e) { 
+                        html += `
+                        <div class="flex justify-between items-center p-3 mb-2 rounded-xl bg-bgDark border border-down/30 opacity-50">
+                            <div>
+                                <p class="text-sm font-bold font-mono text-textMuted">${item.symbol}</p>
+                                <p class="text-[9px] text-down font-mono mt-1">NO DATA</p>
+                            </div>
+                        </div>`;
+                    }
+                }
+                container.innerHTML = html;
+            },
+
+            setupEventListeners() {
+                const searchInput = document.getElementById('searchInput');
+                const searchResults = document.getElementById('searchResults');
+                let searchTimer;
+
+                document.addEventListener('click', (e) => {
+                    if (!e.target.closest('#searchContainer')) searchResults.classList.add('hidden');
+                });
+
+                document.getElementById('btnRefreshWatchlist').addEventListener('click', () => {
+                    App.refreshWatchlist();
+                });
+                searchInput.addEventListener('input', (e) => {
+                    const query = e.target.value.trim().toUpperCase();
+                    clearTimeout(searchTimer);
+                    
+                    if(query.length < 2) { 
+                        searchResults.classList.add('hidden'); 
+                        return; 
+                    }
+                    
+                    searchResults.innerHTML = '<li class="p-4 text-sm text-textMuted text-center font-mono flex items-center justify-center gap-2"><i class="ph ph-spinner animate-spin text-brand text-lg"></i> Buscando...</li>';
+                    searchResults.classList.remove('hidden');
+
+                    searchTimer = setTimeout(async () => {
+                        try {
+                            const data = await API.searchSymbol(query);
+                            
+                            if(!data || data.length === 0 || data["Error Message"]) {
+                                searchResults.innerHTML = '<li class="p-4 text-sm text-down text-center font-mono">No se encontraron resultados</li>';
+                                return;
+                            }
+
+                            searchResults.innerHTML = data.slice(0,6).map(stock => `
+                                <li class="p-3 hover:bg-panelHover cursor-pointer flex justify-between items-center group transition-colors" onclick="App.handleSearchClick('${stock.symbol}', '${stock.name}')">
+                                    <div class="overflow-hidden pr-2">
+                                        <span class="font-bold font-mono text-white group-hover:text-brand text-sm">${stock.symbol}</span>
+                                        <span class="text-xs text-textMuted ml-2 truncate inline-block align-bottom max-w-[200px]">${stock.name || ''}</span>
+                                    </div>
+                                    <span class="text-[9px] bg-bgDark border border-borderOutline text-textMuted px-2 py-0.5 rounded font-bold">${stock.stockExchange || 'MARKET'}</span>
+                                </li>
+                            `).join('');
+                        } catch(err) { 
+                            searchResults.innerHTML = '<li class="p-4 text-sm text-down text-center font-mono">Error de red</li>';
+                        }
+                    }, 500);
+                });
+
+                searchInput.addEventListener('keyup', (e) => {
+                    if (e.key === 'Enter') {
+                        let query = searchInput.value.trim().toUpperCase();
+                        if(query) {
+                            clearTimeout(searchTimer);
+                            searchInput.value = '';
+                            searchResults.classList.add('hidden');
+                            App.loadAsset(query);
+                        }
+                    }
+                });
+            },
+
+            handleSearchClick(sym, name) {
+                const searchInput = document.getElementById('searchInput');
+                const searchResults = document.getElementById('searchResults');
+                searchInput.value = ''; 
+                searchResults.classList.add('hidden'); 
+                this.loadAsset(sym, name);
+            },
+
+            init() {
+                UI.initChart();
+                this.setupEventListeners();
+                this.refreshWatchlist();
+                this.loadAsset('AAPL', 'Apple Inc.');
+            }
+        };
+
+        window.addEventListener('DOMContentLoaded', () => {
+            App.init();
+        });
+    </script>
+</body>
+</html>
